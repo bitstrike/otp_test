@@ -3,7 +3,7 @@
 # Running without arguments will produce output like this. you can set $1 to one of those values to test a valid code.
 # "$1" will be hashed with the server secret to create a hash to test with. The hash would otherwise be generated on the client.
 #
-# eg: ./totp.sh 1670008229 ---------------+
+# eg: ./hotp.sh 1670008229 ---------------+
 #                                         |
 # ...                                     |
 # moving secs: 1670008224                 |
@@ -19,6 +19,9 @@
 # match         :
 # 
 
+# manifest errors produced by any pipe
+set -o pipefail
+
 # secret key - openssl rand -hex 20
 secret="a69b8d50ba4f1a8bf12c1254d402664d4ec7bdae"
 
@@ -32,8 +35,10 @@ u_hash=$(echo "${secret}${received_val}" | sha1sum | cut -d' ' -f1)
 # wall clock differences between systems - include past 60 seconds.. or 120, or whatever
 LIMIT="60";
 
+# entries older than reap_hours are removed from the OTP hash
+reap_hours="1"
+
 # track recieved values so they are only allowed to be used once
-# TODO: reap old values from file once $LIMIT time has passed?
 output="hashe-cache.txt"
 
 # see if user hash already exists in hashe-cache
@@ -66,7 +71,7 @@ while [ 1 ]; do
    fi
 
    # only calculate up to "emc" seconds to account for different wall clocks
-   if [ "${emc}" -gt ${LIMIT} ]; then
+   if [ "${emc}" -ge ${LIMIT} ]; then
       break
    fi
 
@@ -75,7 +80,16 @@ while [ 1 ]; do
 
 done
 
+# reap old values from file once $LIMIT time has passed?
+# use awk to filter out already used hashes older than $reap_hours
+stale_secs=$(date '+%s' -d NOW-${reap_hours}hour)
+new_hashe=`mktemp --suffix=.hotp.txt`
+cat ${output} | awk "\$1>=${stale_secs}" > ${new_hashe}
+nreaped=$(diff ${output} ${new_hashe} | grep '<' | wc -l)
+mv "${new_hashe}" "${output}" || { echo "Unable to properly reap used hashes. Permissions?"; }
+
 echo "range         : +/- ${emc}"
 echo "user hash     : ${u_hash}"
 echo "server hash   : ${s_hash}"
 echo "match         : ${match}"
+echo "reap count    : ${nreaped}"
